@@ -387,34 +387,140 @@ def parse_gemini_sections(text: str) -> dict[str, str]:
 def inject_css() -> None:
     st.markdown(
         """
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
         <style>
+        html, body, [class*="css"] {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+        }
+
+        /* ---- Header ---- */
+        .tl-title {
+            text-align: center;
+            font-size: 2.6rem;
+            font-weight: 800;
+            letter-spacing: -0.02em;
+            background: linear-gradient(90deg, #7C9CFF 0%, #B47CFF 50%, #FF7CB4 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 0.1rem;
+        }
+        .tl-subtitle {
+            text-align: center;
+            opacity: 0.65;
+            font-size: 1rem;
+            font-weight: 500;
+            letter-spacing: 0.02em;
+            margin-bottom: 1.6rem;
+        }
+        .tl-tagline {
+            text-align: center;
+            opacity: 0.85;
+            margin-bottom: 1.6rem;
+        }
+
+        /* ---- Form container ---- */
+        div[data-testid="stForm"] {
+            border: 1px solid rgba(255,255,255,0.10);
+            border-radius: 18px;
+            padding: 1.75rem 1.75rem 1.25rem 1.75rem;
+            background: linear-gradient(160deg, rgba(124,156,255,0.06), rgba(180,124,255,0.03));
+            box-shadow: 0 8px 30px rgba(0,0,0,0.25);
+        }
+
+        /* ---- Inputs ---- */
+        div[data-testid="stTextInput"] input {
+            border-radius: 10px !important;
+        }
+        div[data-baseweb="select"] > div {
+            border-radius: 10px !important;
+        }
+        div[role="radiogroup"] label {
+            font-weight: 500;
+        }
+
+        /* ---- Analyze button ---- */
+        div[data-testid="stFormSubmitButton"] button {
+            border-radius: 10px;
+            font-weight: 700;
+            letter-spacing: 0.01em;
+            background: linear-gradient(90deg, #7C9CFF, #B47CFF);
+            border: none;
+            color: white;
+            padding: 0.6rem 0;
+            transition: transform 0.15s ease, box-shadow 0.15s ease;
+        }
+        div[data-testid="stFormSubmitButton"] button:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 6px 18px rgba(124,156,255,0.35);
+            color: white;
+        }
+
+        /* ---- Timing caption ---- */
+        .tl-timing {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.78rem;
+            opacity: 0.55;
+            text-align: center;
+            margin-top: 0.5rem;
+        }
+
+        /* ---- Verdict card ---- */
         .verdict-card {
-            border-radius: 12px;
-            padding: 1.5rem;
+            border-radius: 18px;
+            padding: 2rem 1.5rem;
             text-align: center;
             border: 1px solid rgba(255,255,255,0.08);
+            box-shadow: 0 8px 30px rgba(0,0,0,0.25);
         }
         .verdict-title {
-            font-size: 0.85rem;
-            letter-spacing: 0.08em;
-            opacity: 0.75;
+            font-size: 0.8rem;
+            letter-spacing: 0.14em;
+            opacity: 0.65;
             text-transform: uppercase;
+            font-weight: 600;
         }
         .verdict-value {
-            font-size: 2rem;
-            font-weight: 700;
-            margin: 0.25rem 0;
+            font-size: 2.4rem;
+            font-weight: 800;
+            letter-spacing: -0.01em;
+            margin: 0.4rem 0 0.6rem 0;
         }
+        .verdict-confidence {
+            font-size: 0.9rem;
+            opacity: 0.8;
+            font-weight: 500;
+        }
+
+        /* ---- AI insight card ---- */
         .insight-card {
-            border-radius: 12px;
-            padding: 1.25rem 1.5rem;
-            border: 1px solid rgba(120,120,255,0.25);
-            background: rgba(120,120,255,0.06);
+            border-radius: 18px;
+            padding: 1.5rem 1.75rem;
+            border: 1px solid rgba(180,124,255,0.28);
+            background: linear-gradient(160deg, rgba(124,156,255,0.08), rgba(180,124,255,0.04));
+            box-shadow: 0 8px 30px rgba(0,0,0,0.2);
         }
         .insight-header {
             font-weight: 700;
-            font-size: 1.05rem;
-            margin-bottom: 0.5rem;
+            font-size: 1.1rem;
+            margin-bottom: 0.75rem;
+            background: linear-gradient(90deg, #7C9CFF, #B47CFF);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            display: inline-block;
+        }
+
+        /* ---- Section headers ---- */
+        h3 {
+            font-weight: 700 !important;
+            letter-spacing: -0.01em;
+        }
+
+        /* ---- Expander (source results) ---- */
+        div[data-testid="stExpander"] {
+            border-radius: 12px !important;
+            border: 1px solid rgba(255,255,255,0.08) !important;
         }
         </style>
         """,
@@ -426,12 +532,12 @@ def render_verdict_card(verdict: str, confidence: str) -> None:
     style = VERDICT_STYLES.get(verdict, VERDICT_STYLES["UNKNOWN"])
     st.markdown(
         f"""
-        <div class="verdict-card" style="background-color:{style['color']}22; border-color:{style['color']}77;">
+        <div class="verdict-card" style="background-color:{style['color']}18; border-color:{style['color']}55;">
             <div class="verdict-title">Security Verdict</div>
             <div class="verdict-value" style="color:{style['color']};">
                 {style['icon']} {verdict}
             </div>
-            <div>Confidence: {confidence.title()}</div>
+            <div class="verdict-confidence">Confidence: {confidence.title()}</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -477,12 +583,12 @@ def main() -> None:
     st.set_page_config(page_title="ThreatLens", page_icon="🛡️", layout="centered")
     inject_css()
 
-    st.markdown("<h1 style='text-align:center;'>🛡️ ThreatLens</h1>", unsafe_allow_html=True)
+    st.markdown('<div class="tl-title">🛡️ ThreatLens</div>', unsafe_allow_html=True)
+    st.markdown('<div class="tl-subtitle">AI-POWERED THREAT INTELLIGENCE</div>', unsafe_allow_html=True)
     st.markdown(
-        "<p style='text-align:center; opacity:0.75;'>AI-Powered Threat Intelligence</p>",
+        '<div class="tl-tagline">Analyze an IP address, domain, or URL using VirusTotal and WHOIS, explained by AI.</div>',
         unsafe_allow_html=True,
     )
-    st.write("Analyze an IP address, domain, or URL using VirusTotal and WHOIS, explained by AI.")
 
     missing_keys = [
         name for name in ("VT_API_KEY", "GEMINI_API_KEY") if not get_secret(name)
@@ -530,8 +636,9 @@ def main() -> None:
         gemini_text, gemini_error = call_gemini(prompt)
     t2 = time.perf_counter()
 
-    st.caption(
-        f"⏱ Sources: {t1 - t0:.1f}s · Gemini: {t2 - t1:.1f}s · Total: {t2 - t0:.1f}s"
+    st.markdown(
+        f'<div class="tl-timing">⏱ Sources: {t1 - t0:.1f}s · Gemini: {t2 - t1:.1f}s · Total: {t2 - t0:.1f}s</div>',
+        unsafe_allow_html=True,
     )
 
     st.divider()
