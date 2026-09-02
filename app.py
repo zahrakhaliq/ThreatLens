@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import ipaddress
 import re
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional
 from urllib.parse import urlparse
 
@@ -86,20 +88,35 @@ def validate_input(target: str, target_type: str) -> tuple[bool, Optional[str]]:
 # ---------------------------------------------------------------------------
 
 def collect_intelligence(target: str, target_type: str) -> dict[str, dict]:
-    """Run every registered source and collect its normalized result."""
+    """
+    Run every registered source concurrently and collect its normalized
+    result. Running sources in parallel (rather than one after another)
+    cuts total wait time down to roughly the slowest single source
+    instead of the sum of all of them.
+    """
     target_type_key = target_type.lower()
     results: dict[str, dict] = {}
-    for source_name, source_function in SOURCES.items():
+
+    def _run(name: str, func) -> tuple[str, dict]:
         try:
-            results[source_name] = source_function(target, target_type_key)
+            return name, func(target, target_type_key)
         except Exception as exc:  # a misbehaving source must never crash the app
-            results[source_name] = {
-                "source": source_name,
+            return name, {
+                "source": name,
                 "success": False,
                 "data": {},
                 "error": f"Unexpected error: {exc}",
             }
-    return results
+
+    with ThreadPoolExecutor(max_workers=max(len(SOURCES), 1)) as executor:
+        futures = [executor.submit(_run, name, func) for name, func in SOURCES.items()]
+        for future in as_completed(futures):
+            name, result = future.result()
+            results[name] = result
+
+    # Preserve the registry's declared order in the returned dict,
+    # regardless of which source finished first.
+    return {name: results[name] for name in SOURCES if name in results}
 
 
 # ---------------------------------------------------------------------------
@@ -250,8 +267,12 @@ RECOMMENDED ACTION:
 # Gemini call + response parsing
 # ---------------------------------------------------------------------------
 
-def call_gemini(prompt: str) -> tuple[Optional[str], Optional[str]]:
-    """Call Gemini and return (text, error)."""
+def call_gemini(prompt: str, max_retries: int = 3) -> tuple[Optional[str], Optional[str]]:
+    """
+    Call Gemini and return (text, error).
+    Retries automatically on transient overload/rate-limit errors
+    (HTTP 503 / 429), with a short increasing wait between attempts.
+    """
     if genai is None:
         return None, "google-genai package is not installed"
 
@@ -260,16 +281,25 @@ def call_gemini(prompt: str) -> tuple[Optional[str], Optional[str]]:
         return None, "API key not configured (GEMINI_API_KEY missing in secrets)"
 
     model_name = get_secret("GEMINI_MODEL") or DEFAULT_GEMINI_MODEL
+    client = genai.Client(api_key=api_key)
 
-    try:
-        client = genai.Client(api_key=api_key)
-        response = client.models.generate_content(model=model_name, contents=prompt)
-        text = getattr(response, "text", None)
-        if not text:
-            return None, "Gemini returned an empty response"
-        return text, None
-    except Exception as exc:
-        return None, f"Gemini request failed: {exc}"
+    last_error = "Unknown error"
+    for attempt in range(1, max_retries + 1):
+        try:
+            response = client.models.generate_content(model=model_name, contents=prompt)
+            text = getattr(response, "text", None)
+            if not text:
+                return None, "Gemini returned an empty response"
+            return text, None
+        except Exception as exc:
+            last_error = str(exc)
+            is_transient = "503" in last_error or "429" in last_error or "UNAVAILABLE" in last_error
+            if is_transient and attempt < max_retries:
+                time.sleep(attempt * 2)  # 2s, then 4s
+                continue
+            return None, f"Gemini request failed: {last_error}"
+
+    return None, f"Gemini request failed after {max_retries} attempts: {last_error}"
 
 
 def parse_gemini_sections(text: str) -> dict[str, str]:
