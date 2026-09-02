@@ -299,7 +299,18 @@ def _call_gemini_cached(prompt: str, max_retries: int) -> str:
         raise RuntimeError("API key not configured (GEMINI_API_KEY missing in secrets)")
 
     model_name = get_secret("GEMINI_MODEL") or DEFAULT_GEMINI_MODEL
-    client = genai.Client(api_key=api_key)
+
+    # Cap how long any single HTTP request to Gemini is allowed to hang
+    # before we give up on it and move to the next retry — without this,
+    # one slow/overloaded attempt can silently eat 60s+ before even
+    # returning an error, which then stacks with our own backoff delays.
+    client_kwargs = {"api_key": api_key}
+    if genai_types is not None:
+        try:
+            client_kwargs["http_options"] = genai_types.HttpOptions(timeout=20_000)  # ms
+        except Exception:
+            pass
+    client = genai.Client(**client_kwargs)
 
     # For newer Gemini models (3.x), "thinking" mode is on by default and
     # can add tens of seconds of latency even for a simple formatted reply.
@@ -310,7 +321,7 @@ def _call_gemini_cached(prompt: str, max_retries: int) -> str:
         try:
             generation_config = genai_types.GenerateContentConfig(
                 thinking_config=genai_types.ThinkingConfig(thinking_level="minimal"),
-                max_output_tokens=700,
+                max_output_tokens=500,
             )
         except Exception:
             generation_config = None
@@ -346,7 +357,7 @@ def _call_gemini_cached(prompt: str, max_retries: int) -> str:
     raise RuntimeError(f"Gemini request failed after {max_retries} attempts: {last_error}")
 
 
-def call_gemini(prompt: str, max_retries: int = 3) -> tuple[Optional[str], Optional[str]]:
+def call_gemini(prompt: str, max_retries: int = 2) -> tuple[Optional[str], Optional[str]]:
     """Call Gemini and return (text, error). See _call_gemini_cached for retry/caching behavior."""
     try:
         text = _call_gemini_cached(prompt, max_retries)
