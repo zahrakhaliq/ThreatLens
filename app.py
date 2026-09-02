@@ -140,6 +140,7 @@ def derive_verdict(results: dict[str, dict]) -> tuple[str, str]:
     malicious = data.get("malicious")
     suspicious = data.get("suspicious")
     total = data.get("total_engines")
+    reputation = data.get("reputation")
 
     if malicious is None and suspicious is None:
         return "UNKNOWN", "LOW"
@@ -147,10 +148,21 @@ def derive_verdict(results: dict[str, dict]) -> tuple[str, str]:
     malicious = malicious or 0
     suspicious = suspicious or 0
 
-    if malicious >= 5:
+    # A single lone-engine "malicious" flag is a very common false positive
+    # on VirusTotal (one scanner glitching or using an overly broad
+    # heuristic) — it shouldn't alone outweigh dozens of clean verdicts and
+    # a strong reputation score. Require at least 2 engines in agreement
+    # before calling something outright MALICIOUS.
+    if malicious >= 10:
         return "MALICIOUS", "HIGH"
-    if malicious >= 1:
+    if malicious >= 2:
         return "MALICIOUS", "MEDIUM"
+    if malicious == 1:
+        # Treat as suspicious rather than malicious, unless reputation
+        # data also points the same direction.
+        if reputation is not None and reputation < 0:
+            return "MALICIOUS", "LOW"
+        return "SUSPICIOUS", "LOW"
     if suspicious >= 3:
         return "SUSPICIOUS", "MEDIUM"
     if suspicious >= 1:
@@ -297,7 +309,7 @@ def _call_gemini_cached(prompt: str, max_retries: int) -> str:
     if genai_types is not None:
         try:
             generation_config = genai_types.GenerateContentConfig(
-                thinking_config=genai_types.ThinkingConfig(thinking_budget=0),
+                thinking_config=genai_types.ThinkingConfig(thinking_level="minimal"),
                 max_output_tokens=700,
             )
         except Exception:
