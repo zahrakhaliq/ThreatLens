@@ -387,10 +387,9 @@ def parse_gemini_sections(text: str) -> dict[str, str]:
 def inject_css() -> None:
     st.markdown(
         """
-        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
         <style>
         html, body, [class*="css"] {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
         }
 
         /* ---- Header ---- */
@@ -458,7 +457,7 @@ def inject_css() -> None:
 
         /* ---- Timing caption ---- */
         .tl-timing {
-            font-family: 'JetBrains Mono', monospace;
+            font-family: ui-monospace, 'SF Mono', 'Cascadia Code', Consolas, monospace;
             font-size: 0.78rem;
             opacity: 0.55;
             text-align: center;
