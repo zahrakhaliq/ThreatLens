@@ -87,6 +87,7 @@ def validate_input(target: str, target_type: str) -> tuple[bool, Optional[str]]:
 # Source orchestration — knows nothing about how any individual source works
 # ---------------------------------------------------------------------------
 
+@st.cache_data(ttl=600, show_spinner=False)
 def collect_intelligence(target: str, target_type: str) -> dict[str, dict]:
     """
     Run every registered source concurrently and collect its normalized
@@ -267,7 +268,8 @@ RECOMMENDED ACTION:
 # Gemini call + response parsing
 # ---------------------------------------------------------------------------
 
-def call_gemini(prompt: str, max_retries: int = 3) -> tuple[Optional[str], Optional[str]]:
+@st.cache_data(ttl=600, show_spinner=False)
+def call_gemini(prompt: str, max_retries: int = 2) -> tuple[Optional[str], Optional[str]]:
     """
     Call Gemini and return (text, error).
     Retries automatically on transient overload/rate-limit errors
@@ -446,8 +448,10 @@ def main() -> None:
 
     target = target.strip()
 
+    t0 = time.perf_counter()
     with st.spinner("🔎 Gathering threat intelligence..."):
         results = collect_intelligence(target, target_type)
+    t1 = time.perf_counter()
 
     failed_sources = [name for name, r in results.items() if not r.get("success")]
     if failed_sources:
@@ -462,6 +466,11 @@ def main() -> None:
 
     with st.spinner("🤖 Generating AI insight..."):
         gemini_text, gemini_error = call_gemini(prompt)
+    t2 = time.perf_counter()
+
+    st.caption(
+        f"⏱ Sources: {t1 - t0:.1f}s · Gemini: {t2 - t1:.1f}s · Total: {t2 - t0:.1f}s"
+    )
 
     st.divider()
     render_verdict_card(verdict, confidence)
