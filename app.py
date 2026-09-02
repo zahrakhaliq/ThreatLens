@@ -2,16 +2,13 @@
 app.py
 ------
 ThreatLens — AI-powered threat intelligence dashboard (Streamlit).
-
-Each user enters their own VirusTotal and Gemini API keys in the sidebar.
-Keys live only in that user's Streamlit session.
 """
 
 from __future__ import annotations
 
 import ipaddress
 import re
-from typing import Any, Optional
+from typing import Optional
 from urllib.parse import urlparse
 
 import streamlit as st
@@ -24,7 +21,7 @@ except ImportError:
     genai = None
 
 
-DEFAULT_GEMINI_MODEL = "gemini-3.6-flash"
+DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 
 KNOWLEDGE_LEVELS = ["Beginner", "Intermediate", "Advanced"]
 TARGET_TYPES = ["IP", "Domain", "URL"]
@@ -42,47 +39,39 @@ DOMAIN_REGEX = re.compile(
 )
 
 
-# ---------------------------------------------------------------------------
-# Sidebar — per-user API key entry
-# ---------------------------------------------------------------------------
-
 def render_api_key_sidebar() -> None:
     with st.sidebar:
         st.subheader("🔑 Your API Keys")
 
         st.caption(
-            "Keys are used only for your current session to call VirusTotal "
-            "and Gemini directly. They are not stored, logged, or shared."
+            "Enter your API keys below. They are used only during "
+            "your current Streamlit session."
         )
 
-        # Streamlit directly manages these values in session_state.
         st.text_input(
             "VirusTotal API Key",
             type="password",
             key="VT_API_KEY",
+            placeholder="Enter VirusTotal API key",
         )
 
         st.text_input(
             "Gemini API Key",
             type="password",
             key="GEMINI_API_KEY",
+            placeholder="Enter Gemini API key",
         )
 
-        st.markdown("---")
+        st.divider()
 
         st.caption(
-            "Get a free VirusTotal key at virustotal.com "
-            "(Profile → API Key)."
+            "VirusTotal API key: VirusTotal → Profile → API Key"
         )
 
         st.caption(
-            "Get a free Gemini key at aistudio.google.com/apikey."
+            "Gemini API key: Google AI Studio → API Keys"
         )
 
-
-# ---------------------------------------------------------------------------
-# Validation
-# ---------------------------------------------------------------------------
 
 def validate_input(
     target: str,
@@ -119,10 +108,6 @@ def validate_input(
     return True, None
 
 
-# ---------------------------------------------------------------------------
-# Source orchestration
-# ---------------------------------------------------------------------------
-
 def collect_intelligence(
     target: str,
     target_type: str
@@ -131,9 +116,8 @@ def collect_intelligence(
     target_type_key = target_type.lower()
     results: dict[str, dict] = {}
 
-    # Dynamically execute every registered source.
-    # No source-specific if/elif logic is required.
     for source_name, source_function in SOURCES.items():
+
         try:
             results[source_name] = source_function(
                 target,
@@ -151,11 +135,9 @@ def collect_intelligence(
     return results
 
 
-# ---------------------------------------------------------------------------
-# Verdict logic
-# ---------------------------------------------------------------------------
-
-def derive_verdict(results: dict[str, dict]) -> tuple[str, str]:
+def derive_verdict(
+    results: dict[str, dict]
+) -> tuple[str, str]:
 
     vt = results.get("VirusTotal")
 
@@ -192,11 +174,9 @@ def derive_verdict(results: dict[str, dict]) -> tuple[str, str]:
     return "SAFE", "LOW"
 
 
-# ---------------------------------------------------------------------------
-# Gemini prompt construction
-# ---------------------------------------------------------------------------
-
-def _format_source_results(results: dict[str, dict]) -> str:
+def _format_source_results(
+    results: dict[str, dict]
+) -> str:
 
     lines = []
 
@@ -211,13 +191,13 @@ def _format_source_results(results: dict[str, dict]) -> str:
             if data:
                 for key, value in data.items():
                     lines.append(f"- {key}: {value}")
-
             else:
-                lines.append("- (no data fields returned)")
+                lines.append("- No data fields returned.")
 
         else:
             lines.append(
-                f"- UNAVAILABLE: {result.get('error', 'unknown error')}"
+                f"- UNAVAILABLE: "
+                f"{result.get('error', 'unknown error')}"
             )
 
         lines.append("")
@@ -236,35 +216,31 @@ def build_gemini_prompt(
 
     level_instructions = {
         "Beginner": (
-            "Explain things in simple, plain language for someone new to "
-            "cybersecurity. Briefly explain what the target is, whether it "
-            "appears safe/suspicious/malicious, and why, in non-technical "
-            "terms. Explain any technical term you use. Keep it short and "
-            "give one clear recommended action."
+            "Explain things in simple plain language for someone "
+            "new to cybersecurity. Explain technical terms briefly. "
+            "Keep the assessment concise."
         ),
 
         "Intermediate": (
-            "Assume the reader understands basic cybersecurity concepts. "
-            "You may discuss detection counts, reputation, registration "
-            "information, domain age, and possible indicators of compromise "
-            "using moderate technical terminology."
+            "Assume the reader understands basic cybersecurity. "
+            "Discuss detection counts, reputation, registration "
+            "information, and indicators using moderate technical "
+            "terminology."
         ),
 
         "Advanced": (
-            "Assume the reader has cybersecurity/networking expertise. "
-            "You may discuss detection ratios, vendor consensus, reputation "
-            "signals, registration anomalies, registrar and infrastructure "
-            "indicators present in the data, potential attack-surface "
-            "implications, and the confidence/limitations of this assessment."
+            "Assume the reader has cybersecurity expertise. "
+            "Discuss detection ratios, vendor consensus, reputation "
+            "signals, registration anomalies, infrastructure indicators, "
+            "and confidence limitations."
         ),
     }
 
-    prompt = f"""
-You are a cybersecurity analysis assistant embedded in a tool called ThreatLens.
+    return f"""
+You are a cybersecurity analysis assistant embedded in ThreatLens.
 
 TASK:
-Analyze the intelligence collected below about a single target and produce
-a concise structured security assessment.
+Analyze the intelligence collected below about one target.
 
 TARGET:
 {target}
@@ -275,34 +251,32 @@ TARGET TYPE:
 KNOWLEDGE LEVEL:
 {knowledge_level}
 
-A verdict has already been computed programmatically from the structured
-evidence:
-
-COMPUTED VERDICT:
+PROGRAMMATIC VERDICT:
 {computed_verdict}
 
-COMPUTED CONFIDENCE:
+PROGRAMMATIC CONFIDENCE:
 {computed_confidence}
 
-Treat this computed verdict as authoritative.
-Do NOT override it.
-Explain the reasoning behind it using only the supplied evidence.
+IMPORTANT:
+The programmatic verdict is authoritative.
+Do not override it.
+
+Use ONLY the intelligence supplied below.
 
 COLLECTED SOURCE RESULTS:
 {_format_source_results(results)}
 
 STRICT RULES:
 
-- Analyze ONLY the source data supplied above.
 - Do not fabricate threat intelligence.
 - Do not assume missing information.
-- Do not treat absence of detections as proof that a target is safe.
-- Clearly distinguish observed facts from your interpretation.
-- If a source is unavailable, explicitly say that it was unavailable.
+- Do not treat absence of detections as absolute proof of safety.
+- Clearly distinguish observed facts from interpretation.
+- If a source is unavailable, explicitly mention that.
 - Do not invent information from unavailable sources.
 - Keep the response concise.
 
-AUDIENCE INSTRUCTIONS:
+AUDIENCE:
 {level_instructions[knowledge_level]}
 
 Respond using EXACTLY this structure:
@@ -323,14 +297,25 @@ KEY FINDINGS:
 
 RECOMMENDED ACTION:
 <1-2 sentences>
-"""
-
-    return prompt
+""".strip()
 
 
-# ---------------------------------------------------------------------------
-# Gemini call + response parsing
-# ---------------------------------------------------------------------------
+def get_gemini_model() -> str:
+
+    try:
+        configured_model = st.secrets.get(
+            "GEMINI_MODEL",
+            DEFAULT_GEMINI_MODEL
+        )
+
+        if configured_model:
+            return str(configured_model).strip()
+
+    except Exception:
+        pass
+
+    return DEFAULT_GEMINI_MODEL
+
 
 def call_gemini(
     prompt: str,
@@ -338,34 +323,42 @@ def call_gemini(
 ) -> tuple[Optional[str], Optional[str]]:
 
     if genai is None:
-        return None, "google-genai package is not installed"
+        return None, "google-genai package is not installed."
 
     if not api_key:
-        return None, "No Gemini API key provided. Enter it in the sidebar."
+        return None, "No Gemini API key provided."
 
-    # Optional model override from Streamlit secrets/environment.
-    model_name = get_secret("GEMINI_MODEL") or DEFAULT_GEMINI_MODEL
+    model_name = get_gemini_model()
 
     try:
-        client = genai.Client(api_key=api_key)
+
+        client = genai.Client(
+            api_key=api_key
+        )
 
         response = client.models.generate_content(
             model=model_name,
-            contents=prompt,
+            contents=prompt
         )
 
-        text = getattr(response, "text", None)
+        text = getattr(
+            response,
+            "text",
+            None
+        )
 
         if not text:
-            return None, "Gemini returned an empty response"
+            return None, "Gemini returned an empty response."
 
-        return text, None
+        return text.strip(), None
 
     except Exception as exc:
         return None, f"Gemini request failed: {exc}"
 
 
-def parse_gemini_sections(text: str) -> dict[str, str]:
+def parse_gemini_sections(
+    text: str
+) -> dict[str, str]:
 
     sections = {
         "SUMMARY": "",
@@ -381,9 +374,24 @@ def parse_gemini_sections(text: str) -> dict[str, str]:
         "RECOMMENDED ACTION",
     ]
 
-    for i, label in enumerate(labels):
+    for index, label in enumerate(labels):
 
-        pattern = rf"{label}:\s*(.*?)(?=(?:{'|'.join(labels[i+1:])}:)|\Z)"
+        remaining_labels = labels[index + 1:]
+
+        if remaining_labels:
+
+            lookahead = "|".join(
+                re.escape(item)
+                for item in remaining_labels
+            )
+
+            pattern = (
+                rf"{re.escape(label)}:\s*"
+                rf"(.*?)(?=(?:{lookahead}):|\Z)"
+            )
+
+        else:
+            pattern = rf"{re.escape(label)}:\s*(.*)"
 
         match = re.search(
             pattern,
@@ -397,10 +405,6 @@ def parse_gemini_sections(text: str) -> dict[str, str]:
     return sections
 
 
-# ---------------------------------------------------------------------------
-# UI helpers
-# ---------------------------------------------------------------------------
-
 def inject_css() -> None:
 
     st.markdown(
@@ -408,10 +412,11 @@ def inject_css() -> None:
         <style>
 
         .verdict-card {
-            border-radius: 12px;
+            border-radius: 16px;
             padding: 1.5rem;
             text-align: center;
-            border: 1px solid rgba(255,255,255,0.08);
+            border: 1px solid rgba(255,255,255,0.12);
+            margin: 1rem 0;
         }
 
         .verdict-title {
@@ -428,10 +433,11 @@ def inject_css() -> None:
         }
 
         .insight-card {
-            border-radius: 12px;
+            border-radius: 16px;
             padding: 1.25rem 1.5rem;
             border: 1px solid rgba(120,120,255,0.25);
             background: rgba(120,120,255,0.06);
+            margin-top: 1rem;
         }
 
         .insight-header {
@@ -442,7 +448,7 @@ def inject_css() -> None:
 
         </style>
         """,
-        unsafe_allow_html=True,
+        unsafe_allow_html=True
     )
 
 
@@ -456,12 +462,15 @@ def render_verdict_card(
         VERDICT_STYLES["UNKNOWN"]
     )
 
+    color = style["color"]
+    icon = style["icon"]
+
     st.markdown(
         f"""
         <div class="verdict-card"
              style="
-                background-color:{style['color']}22;
-                border-color:{style['color']}77;
+                 background-color: {color}22;
+                 border-color: {color}77;
              ">
 
             <div class="verdict-title">
@@ -469,10 +478,8 @@ def render_verdict_card(
             </div>
 
             <div class="verdict-value"
-                 style="color:{style['color']};">
-
-                {style['icon']} {verdict}
-
+                 style="color: {color};">
+                {icon} {verdict}
             </div>
 
             <div>
@@ -481,7 +488,7 @@ def render_verdict_card(
 
         </div>
         """,
-        unsafe_allow_html=True,
+        unsafe_allow_html=True
     )
 
 
@@ -506,7 +513,7 @@ def render_ai_insight(
             🤖 AI Security Insight ({knowledge_level})
         </div>
         """,
-        unsafe_allow_html=True,
+        unsafe_allow_html=True
     )
 
     st.write(summary)
@@ -534,25 +541,33 @@ def render_source_results(
 
     for source_name, result in results.items():
 
-        with st.expander(source_name, expanded=False):
+        with st.expander(
+            source_name,
+            expanded=False
+        ):
 
             if result.get("success"):
 
-                data = result.get("data", {})
+                data = result.get(
+                    "data",
+                    {}
+                )
 
                 if not data:
                     st.info("No data returned.")
 
-                for key, value in data.items():
+                else:
 
-                    label = key.replace(
-                        "_",
-                        " "
-                    ).title()
+                    for key, value in data.items():
 
-                    st.markdown(
-                        f"**{label}:** {value}"
-                    )
+                        label = key.replace(
+                            "_",
+                            " "
+                        ).title()
+
+                        st.markdown(
+                            f"**{label}:** {value}"
+                        )
 
             else:
 
@@ -562,16 +577,12 @@ def render_source_results(
                 )
 
 
-# ---------------------------------------------------------------------------
-# Main app
-# ---------------------------------------------------------------------------
-
 def main() -> None:
 
     st.set_page_config(
         page_title="ThreatLens",
         page_icon="🛡️",
-        layout="centered",
+        layout="centered"
     )
 
     inject_css()
@@ -579,7 +590,7 @@ def main() -> None:
 
     st.markdown(
         "<h1 style='text-align:center;'>🛡️ ThreatLens</h1>",
-        unsafe_allow_html=True,
+        unsafe_allow_html=True
     )
 
     st.markdown(
@@ -588,7 +599,7 @@ def main() -> None:
             AI-Powered Threat Intelligence
         </p>
         """,
-        unsafe_allow_html=True,
+        unsafe_allow_html=True
     )
 
     st.write(
@@ -601,7 +612,7 @@ def main() -> None:
         target_type = st.radio(
             "Target Type",
             TARGET_TYPES,
-            horizontal=True,
+            horizontal=True
         )
 
         target = st.text_input(
@@ -609,24 +620,23 @@ def main() -> None:
             placeholder=(
                 "e.g. 8.8.8.8, example.com, "
                 "https://example.com/login"
-            ),
+            )
         )
 
         knowledge_level = st.selectbox(
             "Knowledge Level",
             KNOWLEDGE_LEVELS,
-            index=0,
+            index=0
         )
 
         submitted = st.form_submit_button(
             "🔍 Analyze Target",
-            use_container_width=True,
+            use_container_width=True
         )
 
     if not submitted:
         return
 
-    # Get the exact keys entered by the current user.
     vt_api_key = st.session_state.get(
         "VT_API_KEY",
         ""
@@ -637,10 +647,15 @@ def main() -> None:
         ""
     ).strip()
 
-    if not vt_api_key or not gemini_api_key:
+    if not vt_api_key:
         st.error(
-            "Please enter both your VirusTotal and Gemini "
-            "API keys in the sidebar first."
+            "Please enter your VirusTotal API key in the sidebar."
+        )
+        return
+
+    if not gemini_api_key:
+        st.error(
+            "Please enter your Gemini API key in the sidebar."
         )
         return
 
@@ -655,13 +670,10 @@ def main() -> None:
 
     target = target.strip()
 
-    # ---------------------------------------------------------------
-    # Collect intelligence
-    # ---------------------------------------------------------------
-
     with st.spinner(
         "🔎 Gathering threat intelligence..."
     ):
+
         results = collect_intelligence(
             target,
             target_type
@@ -676,46 +688,30 @@ def main() -> None:
     if failed_sources:
         st.warning(
             f"⚠ {', '.join(failed_sources)} unavailable. "
-            "Continuing with the remaining source(s) where possible."
+            "Continuing with available sources."
         )
 
-    # ---------------------------------------------------------------
-    # Programmatic verdict
-    # ---------------------------------------------------------------
-
-    verdict, confidence = derive_verdict(results)
-
-    # ---------------------------------------------------------------
-    # Build Gemini prompt
-    # ---------------------------------------------------------------
-
-    prompt = build_gemini_prompt(
-        target,
-        target_type,
-        knowledge_level,
-        results,
-        verdict,
-        confidence,
+    verdict, confidence = derive_verdict(
+        results
     )
 
-    # ---------------------------------------------------------------
-    # Gemini
-    # ---------------------------------------------------------------
+    prompt = build_gemini_prompt(
+        target=target,
+        target_type=target_type,
+        knowledge_level=knowledge_level,
+        results=results,
+        computed_verdict=verdict,
+        computed_confidence=confidence
+    )
 
     with st.spinner(
         "🤖 Generating AI insight..."
     ):
 
-        # IMPORTANT:
-        # Pass the sidebar-entered Gemini key directly.
         gemini_text, gemini_error = call_gemini(
             prompt,
-            gemini_api_key,
+            gemini_api_key
         )
-
-    # ---------------------------------------------------------------
-    # Results
-    # ---------------------------------------------------------------
 
     st.divider()
 
@@ -724,15 +720,13 @@ def main() -> None:
         confidence
     )
 
-    st.write("")
-
     if gemini_error:
 
         st.error(
             f"AI insight unavailable — {gemini_error}"
         )
 
-    else:
+    elif gemini_text:
 
         sections = parse_gemini_sections(
             gemini_text
@@ -741,7 +735,7 @@ def main() -> None:
         render_ai_insight(
             knowledge_level,
             sections,
-            gemini_text,
+            gemini_text
         )
 
     st.write("")
