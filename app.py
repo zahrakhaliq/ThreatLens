@@ -30,8 +30,10 @@ from sources import SOURCES, get_secret
 
 try:
     from google import genai
+    from google.genai import types as genai_types
 except ImportError:  # pragma: no cover
     genai = None
+    genai_types = None
 
 
 DEFAULT_GEMINI_MODEL = "gemini-3.5-flash"
@@ -269,39 +271,76 @@ RECOMMENDED ACTION:
 # ---------------------------------------------------------------------------
 
 @st.cache_data(ttl=600, show_spinner=False)
-def call_gemini(prompt: str, max_retries: int = 2) -> tuple[Optional[str], Optional[str]]:
+def _call_gemini_cached(prompt: str, max_retries: int) -> str:
     """
-    Call Gemini and return (text, error).
-    Retries automatically on transient overload/rate-limit errors
-    (HTTP 503 / 429), with a short increasing wait between attempts.
+    Actually calls Gemini and returns the text on success.
+    Raises RuntimeError on any failure — Streamlit's cache never stores a
+    result from a call that raised, so failed attempts (e.g. a transient
+    503) are never cached and the next click genuinely retries the API
+    instead of replaying a stale error.
     """
     if genai is None:
-        return None, "google-genai package is not installed"
+        raise RuntimeError("google-genai package is not installed")
 
     api_key = get_secret("GEMINI_API_KEY")
     if not api_key:
-        return None, "API key not configured (GEMINI_API_KEY missing in secrets)"
+        raise RuntimeError("API key not configured (GEMINI_API_KEY missing in secrets)")
 
     model_name = get_secret("GEMINI_MODEL") or DEFAULT_GEMINI_MODEL
     client = genai.Client(api_key=api_key)
 
+    # For newer Gemini models (3.x), "thinking" mode is on by default and
+    # can add tens of seconds of latency even for a simple formatted reply.
+    # We don't need deep reasoning here, so turn it off and cap the reply
+    # length to keep generation fast.
+    generation_config = None
+    if genai_types is not None:
+        try:
+            generation_config = genai_types.GenerateContentConfig(
+                thinking_config=genai_types.ThinkingConfig(thinking_budget=0),
+                max_output_tokens=700,
+            )
+        except Exception:
+            generation_config = None
+
     last_error = "Unknown error"
+    config_disabled = False
     for attempt in range(1, max_retries + 1):
         try:
-            response = client.models.generate_content(model=model_name, contents=prompt)
+            use_config = generation_config if (generation_config is not None and not config_disabled) else None
+            if use_config is not None:
+                response = client.models.generate_content(
+                    model=model_name, contents=prompt, config=use_config
+                )
+            else:
+                response = client.models.generate_content(model=model_name, contents=prompt)
             text = getattr(response, "text", None)
             if not text:
-                return None, "Gemini returned an empty response"
-            return text, None
+                raise RuntimeError("Gemini returned an empty response")
+            return text
         except Exception as exc:
             last_error = str(exc)
             is_transient = "503" in last_error or "429" in last_error or "UNAVAILABLE" in last_error
-            if is_transient and attempt < max_retries:
-                time.sleep(attempt * 2)  # 2s, then 4s
+            is_bad_config = ("400" in last_error or "INVALID_ARGUMENT" in last_error) and not config_disabled
+            if is_bad_config:
+                # This model may not support thinking_config — drop it and retry immediately.
+                config_disabled = True
                 continue
-            return None, f"Gemini request failed: {last_error}"
+            if is_transient and attempt < max_retries:
+                time.sleep(attempt * 3)  # 3s, then 6s
+                continue
+            raise RuntimeError(f"Gemini request failed: {last_error}") from exc
 
-    return None, f"Gemini request failed after {max_retries} attempts: {last_error}"
+    raise RuntimeError(f"Gemini request failed after {max_retries} attempts: {last_error}")
+
+
+def call_gemini(prompt: str, max_retries: int = 3) -> tuple[Optional[str], Optional[str]]:
+    """Call Gemini and return (text, error). See _call_gemini_cached for retry/caching behavior."""
+    try:
+        text = _call_gemini_cached(prompt, max_retries)
+        return text, None
+    except Exception as exc:
+        return None, str(exc)
 
 
 def parse_gemini_sections(text: str) -> dict[str, str]:
