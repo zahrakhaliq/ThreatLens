@@ -32,7 +32,7 @@ except ImportError:  # pragma: no cover
     genai = None
 
 
-DEFAULT_GEMINI_MODEL = "gemini-3.6-flash"
+DEFAULT_GEMINI_MODEL = "gemini-3.5-flash"
 
 KNOWLEDGE_LEVELS = ["Beginner", "Intermediate", "Advanced"]
 TARGET_TYPES = ["IP", "Domain", "URL"]
