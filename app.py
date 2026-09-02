@@ -24,7 +24,7 @@ except ImportError:
     genai = None
 
 
-DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+DEFAULT_GEMINI_MODEL = "gemini-3.6-flash"
 
 KNOWLEDGE_LEVELS = ["Beginner", "Intermediate", "Advanced"]
 TARGET_TYPES = ["IP", "Domain", "URL"]
