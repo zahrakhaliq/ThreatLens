@@ -89,11 +89,13 @@ def validate_input(target: str, target_type: str) -> tuple[bool, Optional[str]]:
 # Source orchestration — knows nothing about how any individual source works
 # ---------------------------------------------------------------------------
 
-@st.cache_data(ttl=600, show_spinner=False)
 def collect_file_intelligence(file_bytes: bytes, filename: str) -> dict[str, dict]:
     """
     Run every registered file-scanning source concurrently, same pattern as
-    collect_intelligence but for the file_bytes/filename contract.
+    collect_intelligence, but deliberately NOT cached: a brand-new file's
+    VirusTotal scan often isn't finished within our polling window, and
+    caching that "not ready yet" result would make a genuine retry just
+    replay the same stale failure instead of re-checking.
     """
     results: dict[str, dict] = {}
 
