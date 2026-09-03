@@ -2,7 +2,6 @@
 
 AI-powered threat intelligence dashboard (Streamlit). Analyzes an IP / Domain / URL using **VirusTotal** + **WHOIS**, shows a color-coded verdict, and explains it via **Gemini** at your chosen knowledge level (Beginner/Intermediate/Advanced).
 
-Har user apni khud ki VirusTotal aur Gemini API key sidebar mein enter karta hai — koi key code mein hardcoded nahi hai.
 
 ## Structure
 ```
