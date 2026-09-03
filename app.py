@@ -26,7 +26,7 @@ from urllib.parse import urlparse
 
 import streamlit as st
 
-from sources import SOURCES, get_secret
+from sources import FILE_SOURCES, SOURCES, get_secret
 
 try:
     from google import genai
@@ -90,6 +90,34 @@ def validate_input(target: str, target_type: str) -> tuple[bool, Optional[str]]:
 # ---------------------------------------------------------------------------
 
 @st.cache_data(ttl=600, show_spinner=False)
+def collect_file_intelligence(file_bytes: bytes, filename: str) -> dict[str, dict]:
+    """
+    Run every registered file-scanning source concurrently, same pattern as
+    collect_intelligence but for the file_bytes/filename contract.
+    """
+    results: dict[str, dict] = {}
+
+    def _run(name: str, func) -> tuple[str, dict]:
+        try:
+            return name, func(file_bytes, filename)
+        except Exception as exc:
+            return name, {
+                "source": name,
+                "success": False,
+                "data": {},
+                "error": f"Unexpected error: {exc}",
+            }
+
+    with ThreadPoolExecutor(max_workers=max(len(FILE_SOURCES), 1)) as executor:
+        futures = [executor.submit(_run, name, func) for name, func in FILE_SOURCES.items()]
+        for future in as_completed(futures):
+            name, result = future.result()
+            results[name] = result
+
+    return {name: results[name] for name in FILE_SOURCES if name in results}
+
+
+@st.cache_data(ttl=600, show_spinner=False)
 def collect_intelligence(target: str, target_type: str) -> dict[str, dict]:
     """
     Run every registered source concurrently and collect its normalized
@@ -132,7 +160,7 @@ def derive_verdict(results: dict[str, dict]) -> tuple[str, str]:
     Currently keys off VirusTotal detection stats when available.
     Falls back to UNKNOWN if there isn't enough evidence.
     """
-    vt = results.get("VirusTotal")
+    vt = results.get("VirusTotal") or results.get("VirusTotal (File)")
     if not vt or not vt.get("success"):
         return "UNKNOWN", "LOW"
 
@@ -578,48 +606,9 @@ def render_source_results(results: dict[str, dict]) -> None:
 # Main app
 # ---------------------------------------------------------------------------
 
-def main() -> None:
-    st.set_page_config(page_title="ThreatLens", page_icon="🛡️", layout="centered")
-    inject_css()
-
-    st.markdown('<div class="tl-title">🛡️ ThreatLens</div>', unsafe_allow_html=True)
-    st.markdown('<div class="tl-subtitle">AI-POWERED THREAT INTELLIGENCE</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="tl-tagline">Analyze an IP address, domain, or URL using VirusTotal and WHOIS, explained by AI.</div>',
-        unsafe_allow_html=True,
-    )
-
-    missing_keys = [
-        name for name in ("VT_API_KEY", "GEMINI_API_KEY") if not get_secret(name)
-    ]
-    if missing_keys:
-        st.warning(
-            f"⚠ Missing secret(s): {', '.join(missing_keys)}. "
-            "Add them in your Streamlit Cloud app's Settings → Secrets "
-            "(or a local .streamlit/secrets.toml) before analyzing."
-        )
-
-    with st.form("analyze_form"):
-        target_type = st.radio("Target Type", TARGET_TYPES, horizontal=True)
-        target = st.text_input("Target", placeholder="e.g. 8.8.8.8, example.com, https://example.com/login")
-        knowledge_level = st.selectbox("Knowledge Level", KNOWLEDGE_LEVELS, index=0)
-        submitted = st.form_submit_button("🔍 Analyze Target", use_container_width=True)
-
-    if not submitted:
-        return
-
-    is_valid, error_message = validate_input(target, target_type)
-    if not is_valid:
-        st.error(error_message)
-        return
-
-    target = target.strip()
-
-    t0 = time.perf_counter()
-    with st.spinner("🔎 Gathering threat intelligence..."):
-        results = collect_intelligence(target, target_type)
-    t1 = time.perf_counter()
-
+def render_results(target: str, target_type: str, knowledge_level: str, results: dict[str, dict],
+                    t0: float, t1: float) -> None:
+    """Shared rendering path for both the target-analysis and file-scan tabs."""
     failed_sources = [name for name, r in results.items() if not r.get("success")]
     if failed_sources:
         st.warning(
@@ -652,6 +641,89 @@ def main() -> None:
 
     st.write("")
     render_source_results(results)
+
+
+def render_target_tab() -> None:
+    with st.form("analyze_form"):
+        target_type = st.radio("Target Type", TARGET_TYPES, horizontal=True)
+        target = st.text_input("Target", placeholder="e.g. 8.8.8.8, example.com, https://example.com/login")
+        knowledge_level = st.selectbox("Knowledge Level", KNOWLEDGE_LEVELS, index=0, key="target_level")
+        submitted = st.form_submit_button("🔍 Analyze Target", use_container_width=True)
+
+    if not submitted:
+        return
+
+    is_valid, error_message = validate_input(target, target_type)
+    if not is_valid:
+        st.error(error_message)
+        return
+
+    target = target.strip()
+
+    t0 = time.perf_counter()
+    with st.spinner("🔎 Gathering threat intelligence..."):
+        results = collect_intelligence(target, target_type)
+    t1 = time.perf_counter()
+
+    render_results(target, target_type, knowledge_level, results, t0, t1)
+
+
+def render_file_tab() -> None:
+    st.caption(
+        "Upload a file to check it against VirusTotal's file-scanning engines. "
+        "Max 32MB. Files VirusTotal hasn't seen before may take a minute to finish scanning."
+    )
+    with st.form("file_scan_form"):
+        uploaded_file = st.file_uploader("File to scan", type=None)
+        knowledge_level = st.selectbox("Knowledge Level", KNOWLEDGE_LEVELS, index=0, key="file_level")
+        submitted = st.form_submit_button("🔍 Scan File", use_container_width=True)
+
+    if not submitted:
+        return
+
+    if uploaded_file is None:
+        st.error("Please choose a file to scan.")
+        return
+
+    file_bytes = uploaded_file.getvalue()
+    if len(file_bytes) > 32 * 1024 * 1024:
+        st.error("That file is larger than 32MB, which VirusTotal's standard upload endpoint doesn't accept.")
+        return
+
+    t0 = time.perf_counter()
+    with st.spinner("🔎 Scanning file..."):
+        results = collect_file_intelligence(file_bytes, uploaded_file.name)
+    t1 = time.perf_counter()
+
+    render_results(uploaded_file.name, "File", knowledge_level, results, t0, t1)
+
+
+def main() -> None:
+    st.set_page_config(page_title="ThreatLens", page_icon="🛡️", layout="centered")
+    inject_css()
+
+    st.markdown('<div class="tl-title">🛡️ ThreatLens</div>', unsafe_allow_html=True)
+    st.markdown('<div class="tl-subtitle">AI-POWERED THREAT INTELLIGENCE</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="tl-tagline">Analyze an IP, domain, URL, or file using multiple threat intelligence sources, explained by AI.</div>',
+        unsafe_allow_html=True,
+    )
+
+    missing_keys = [
+        name for name in ("VT_API_KEY", "GEMINI_API_KEY") if not get_secret(name)
+    ]
+    if missing_keys:
+        st.warning(
+            f"⚠ Missing secret(s): {', '.join(missing_keys)}. "
+            "Add them in your Streamlit Cloud app's Settings → Secrets "
+            "(or a local .streamlit/secrets.toml) before analyzing."
+        )
+
+    tab_target, tab_file = st.tabs(["🌐 Analyze Target", "📄 Scan File"])
+    with tab_target:
+        render_target_tab()
+    with tab_file:
+        render_file_tab()
 
 
 if __name__ == "__main__":
