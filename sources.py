@@ -49,7 +49,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from typing import Any, Optional
-from urllib.parse import quote, urlparse
+from urllib.parse import urlparse
 
 import requests
 
@@ -240,114 +240,6 @@ def get_whois(target: str, target_type: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# AlienVault OTX
-# ---------------------------------------------------------------------------
-
-def get_alienvault_otx(target: str, target_type: str) -> dict:
-    """Query AlienVault OTX for pulse/reputation data on an IP, domain, or URL."""
-    source_name = "AlienVault OTX"
-    api_key = get_secret("OTX_API_KEY")
-    if not api_key:
-        return _fail(source_name, "API key not configured (OTX_API_KEY missing in secrets)")
-
-    ioc_type_map = {"ip": "IPv4", "domain": "domain", "url": "url"}
-    ioc_type = ioc_type_map.get(target_type)
-    if not ioc_type:
-        return _fail(source_name, f"Unsupported target type: {target_type}")
-
-    indicator = quote(target, safe="")
-    endpoint = f"https://otx.alienvault.com/api/v1/indicators/{ioc_type}/{indicator}/general"
-    headers = {"X-OTX-API-KEY": api_key}
-
-    try:
-        response = requests.get(endpoint, headers=headers, timeout=REQUEST_TIMEOUT)
-    except requests.exceptions.RequestException as exc:
-        return _fail(source_name, f"Network error contacting AlienVault OTX: {exc}")
-
-    if response.status_code == 401:
-        return _fail(source_name, "AlienVault OTX rejected the API key (unauthorized)")
-    if response.status_code == 404:
-        return _fail(source_name, "Target not found in AlienVault OTX")
-    if response.status_code != 200:
-        return _fail(source_name, f"AlienVault OTX returned status {response.status_code}")
-
-    try:
-        payload = response.json()
-    except ValueError as exc:
-        return _fail(source_name, f"Unexpected AlienVault OTX response format: {exc}")
-
-    pulse_info = payload.get("pulse_info", {})
-    normalized: dict[str, Any] = {}
-    if "count" in pulse_info:
-        normalized["pulse_count"] = pulse_info.get("count")
-    if payload.get("reputation") is not None:
-        normalized["reputation"] = payload.get("reputation")
-    if payload.get("country"):
-        normalized["country"] = payload.get("country")
-    if payload.get("asn"):
-        normalized["asn"] = payload.get("asn")
-
-    if not normalized:
-        return _fail(source_name, "AlienVault OTX returned no usable data")
-
-    return _ok(source_name, normalized)
-
-
-# ---------------------------------------------------------------------------
-# abuse.ch URLhaus
-# ---------------------------------------------------------------------------
-
-def get_urlhaus(target: str, target_type: str) -> dict:
-    """Query abuse.ch URLhaus for known malware-distribution URLs/hosts."""
-    source_name = "URLhaus"
-    auth_key = get_secret("URLHAUS_AUTH_KEY")
-    if not auth_key:
-        return _fail(source_name, "API key not configured (URLHAUS_AUTH_KEY missing in secrets)")
-
-    headers = {"Auth-Key": auth_key}
-
-    if target_type == "url":
-        endpoint = "https://urlhaus-api.abuse.ch/v1/url/"
-        data = {"url": target}
-    else:
-        endpoint = "https://urlhaus-api.abuse.ch/v1/host/"
-        data = {"host": target}
-
-    try:
-        response = requests.post(endpoint, headers=headers, data=data, timeout=REQUEST_TIMEOUT)
-    except requests.exceptions.RequestException as exc:
-        return _fail(source_name, f"Network error contacting URLhaus: {exc}")
-
-    if response.status_code != 200:
-        return _fail(source_name, f"URLhaus returned status {response.status_code}")
-
-    try:
-        payload = response.json()
-    except ValueError as exc:
-        return _fail(source_name, f"Unexpected URLhaus response format: {exc}")
-
-    query_status = payload.get("query_status")
-    if query_status == "no_results":
-        return _ok(source_name, {"status": "not listed in URLhaus"})
-    if query_status != "ok":
-        return _fail(source_name, f"URLhaus query status: {query_status}")
-
-    normalized: dict[str, Any] = {"status": "LISTED in URLhaus"}
-    if "url_status" in payload:
-        normalized["url_status"] = payload.get("url_status")
-    if "threat" in payload:
-        normalized["threat"] = payload.get("threat")
-    if "date_added" in payload:
-        normalized["date_added"] = payload.get("date_added")
-    if "tags" in payload and payload.get("tags"):
-        normalized["tags"] = payload.get("tags")
-    if "url_count" in payload:
-        normalized["url_count"] = payload.get("url_count")
-
-    return _ok(source_name, normalized)
-
-
-# ---------------------------------------------------------------------------
 # URLScan.io
 # ---------------------------------------------------------------------------
 
@@ -392,61 +284,6 @@ def get_urlscan(target: str, target_type: str) -> dict:
         "most_recent_scan": results[0].get("page", {}).get("url") if results else None,
     }
     normalized = {k: v for k, v in normalized.items() if v not in (None, "")}
-
-    return _ok(source_name, normalized)
-
-
-# ---------------------------------------------------------------------------
-# Shodan
-# ---------------------------------------------------------------------------
-
-def get_shodan(target: str, target_type: str) -> dict:
-    """Query Shodan for exposed services/infrastructure on an IP address."""
-    source_name = "Shodan"
-
-    if target_type != "ip":
-        return _fail(source_name, "Shodan only supports IP address lookups")
-
-    api_key = get_secret("SHODAN_API_KEY")
-    if not api_key:
-        return _fail(source_name, "API key not configured (SHODAN_API_KEY missing in secrets)")
-
-    endpoint = f"https://api.shodan.io/shodan/host/{target}"
-    params = {"key": api_key}
-
-    try:
-        response = requests.get(endpoint, params=params, timeout=REQUEST_TIMEOUT)
-    except requests.exceptions.RequestException as exc:
-        return _fail(source_name, f"Network error contacting Shodan: {exc}")
-
-    if response.status_code == 401:
-        return _fail(source_name, "Shodan rejected the API key (unauthorized)")
-    if response.status_code == 404:
-        return _fail(source_name, "No Shodan data found for this IP")
-    if response.status_code != 200:
-        return _fail(source_name, f"Shodan returned status {response.status_code}")
-
-    try:
-        payload = response.json()
-    except ValueError as exc:
-        return _fail(source_name, f"Unexpected Shodan response format: {exc}")
-
-    normalized: dict[str, Any] = {}
-    if payload.get("org"):
-        normalized["organization"] = payload.get("org")
-    if payload.get("isp"):
-        normalized["isp"] = payload.get("isp")
-    if payload.get("ports"):
-        normalized["open_ports"] = payload.get("ports")
-    if payload.get("vulns"):
-        normalized["known_vulnerabilities"] = list(payload.get("vulns"))
-    if payload.get("hostnames"):
-        normalized["hostnames"] = payload.get("hostnames")
-    if payload.get("country_name"):
-        normalized["country"] = payload.get("country_name")
-
-    if not normalized:
-        return _fail(source_name, "Shodan returned no usable data for this IP")
 
     return _ok(source_name, normalized)
 
@@ -676,10 +513,7 @@ FILE_SOURCES = {
 SOURCES = {
     "VirusTotal": get_virustotal,
     "WHOIS": get_whois,
-    "AlienVault OTX": get_alienvault_otx,
-    "URLhaus": get_urlhaus,
     "URLScan.io": get_urlscan,
-    "Shodan": get_shodan,
     "AbuseIPDB": get_abuseipdb,
     "Google Safe Browsing": get_google_safe_browsing,
 }
